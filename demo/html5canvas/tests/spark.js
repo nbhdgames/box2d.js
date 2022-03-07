@@ -75,13 +75,16 @@ const atkRange = [
 ];
 
 class SparkUnit {
+  game;
   body;
   speedObj = new b2Vec2();
   target;
   size = 0;
   atkRangeEnemySet = new Set();
+  destroyed = false;
 
   constructor(game, data) {
+    this.game = game;
     this.size = data.size;
     this.setupBody(game, data);
     this.setupAttackRange(game, data);
@@ -148,7 +151,7 @@ class SparkUnit {
     this.body.SetTransform(myPos, Math.atan2(dy, dx));
   }
   followUp() {
-    if (!this.target) {
+    if (!this.target || this.target.destroyed) {
       return;
     }
     const myPos = this.body.GetPosition();
@@ -222,8 +225,19 @@ class SparkPlayer extends SparkUnit {
     this.setVelocity(vx, vy);
   }
 
+  startShoot() {}
+
+  stopShoot() {}
+
+  switchTarget() {
+    const enemies = [...this.game.enemies];
+    const idx = enemies.indexOf(this.target); // or -1
+    this.target = enemies[(idx + 1) % enemies.length];
+  }
+
   step() {
     this.updateVelocity();
+    this.faceToTarget();
   }
 }
 
@@ -403,6 +417,8 @@ class SparkGame {
   }
 
   onKeyDown(canvas, evt) {
+    evt.preventDefault();
+    evt.stopPropagation();
     if (evt.code == "KeyW") {
       this.player.moveKeyDown(MOVE_UP);
     } else if (evt.code == "KeyS") {
@@ -411,6 +427,13 @@ class SparkGame {
       this.player.moveKeyDown(MOVE_LEFT);
     } else if (evt.code === "KeyD") {
       this.player.moveKeyDown(MOVE_RIGHT);
+    } else if (evt.code === "KeyJ") {
+      if (!this.player.target) {
+        this.player.switchTarget();
+      }
+      this.player.startShoot();
+    } else if (evt.code === "Tab") {
+      this.player.switchTarget();
     }
   }
 
@@ -423,6 +446,8 @@ class SparkGame {
       this.player.moveKeyUp(MOVE_LEFT);
     } else if (evt.code === "KeyD") {
       this.player.moveKeyUp(MOVE_RIGHT);
+    } else if (evt.code === "KeyJ") {
+      this.player.stopShoot();
     }
   }
   addEnemy(enemy) {
@@ -431,6 +456,9 @@ class SparkGame {
     }
     this.enemies.add(enemy);
     enemy.target = this.player;
+    if (!this.player.target) {
+      this.player.target = enemy;
+    }
     return enemy;
   }
 }
