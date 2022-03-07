@@ -183,8 +183,9 @@ class SparkPlayer extends SparkUnit {
 class SparkEnemy extends SparkUnit {
   data;
   state;
+  onKilled;
 
-  constructor(data) {
+  constructor(data, onKilled) {
     super({
       race: GROUP_ENEMY,
       x: data.x,
@@ -194,6 +195,7 @@ class SparkEnemy extends SparkUnit {
     });
     this.data = data;
     this.setupState();
+    this.onKilled = onKilled;
   }
 
   get speed() {
@@ -201,12 +203,16 @@ class SparkEnemy extends SparkUnit {
   }
 
   setupState() {
-    this.state = createState(this, this.data.state);
+    this.state = loadStateMachine(this, this.data.state, () => {
+      this.state = null;
+    });
     this.state.enter();
   }
 
   step() {
-    this.state.step();
+    if (this.state) {
+      this.state.step();
+    }
   }
 }
 
@@ -271,6 +277,7 @@ class SparkGame {
   player;
   wall;
   edge;
+  level;
   enemies = new Set();
 
   setNiceViewCenter() {
@@ -287,10 +294,15 @@ class SparkGame {
 
   createWall() {}
 
-  step() {
-    this.player.step();
+  step(dt) {
+    if (this.player) {
+      this.player.step();
+    }
     for (const enemy of this.enemies) {
       enemy.step();
+    }
+    if (this.level) {
+      this.level.step(dt);
     }
   }
 
@@ -318,31 +330,76 @@ class SparkGame {
     }
   }
   addEnemy(enemy) {
-    if (!enemy instanceof SparkEnemy) {
+    if (!(enemy instanceof SparkEnemy)) {
       enemy = new SparkEnemy(enemy);
     }
     this.enemies.add(enemy);
     enemy.target = this.player;
+    return enemy;
   }
 }
 
 class embox2dTest_spark extends SparkGame {
   setup() {
     super.setup();
-    for (let i = 0; i <= 10; i++) {
-      this.addEnemy(
-        new SparkEnemy({
-          hp: 100,
-          x: (i - 5) * 2,
-          y: -32,
-          size: 1,
-          speed: 5,
-          state: {
-            type: "followUp",
+    this.level = loadLevel(this, {
+      type: "parellel",
+      states: [
+        {
+          type: "interval",
+          interval: 1,
+          count: 5,
+          delay: 0,
+          each: {
+            type: "createEnemy",
+            enemy: {
+              x: -10,
+              y: -40,
+              hp: 100,
+              size: 1,
+              speed: 5,
+              state: {
+                type: "followUp",
+              },
+            },
           },
-        })
-      );
-    }
+        },
+        {
+          type: "interval",
+          interval: 1,
+          count: 5,
+          delay: 0,
+          each: {
+            type: "createEnemy",
+            enemy: {
+              x: 10,
+              y: -40,
+              hp: 100,
+              size: 1,
+              speed: 5,
+              state: {
+                type: "followUp",
+              },
+            },
+          },
+        },
+      ],
+    });
+    this.level.enter();
+    // for (let i = 0; i <= 10; i++) {
+    //   this.addEnemy(
+    //     new SparkEnemy({
+    //       hp: 100,
+    //       x: (i - 5) * 2,
+    //       y: -32,
+    //       size: 1,
+    //       speed: 5,
+    //       state: {
+    //         type: "followUp",
+    //       },
+    //     })
+    //   );
+    // }
   }
   cleanup() {}
 }

@@ -335,7 +335,7 @@ function resetScene() {
 }
 
 function step(timestamp) {
-  if (currentTest && currentTest.step) currentTest.step();
+  if (currentTest && currentTest.step) currentTest.step(1 / 60);
 
   if (!showStats) {
     world.Step(1 / 60, 3, 2);

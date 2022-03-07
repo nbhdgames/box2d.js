@@ -1,14 +1,16 @@
-window.createState = (function () {
-  class State {
-    constructor(unit) {
+(function () {
+  class UnitStateMachine {
+    constructor(unit, data, onOver) {
       this.unit = unit;
+      this.data = data;
+      this.onOver = onOver;
     }
     enter() {}
     leave() {}
     step() {}
   }
 
-  class FollowUpState extends State {
+  class FollowUpStateMachine extends UnitStateMachine {
     enter() {
       this.unit.body.SetType(b2_dynamicBody);
     }
@@ -21,12 +23,12 @@ window.createState = (function () {
   }
 
   const stateClasses = {
-    followUp: FollowUpState,
+    followUp: FollowUpStateMachine,
   };
 
-  function createState(unit, data) {
+  function loadStateMachine(unit, data) {
     const Clazz = stateClasses[data.type];
     return new Clazz(unit, data);
   }
-  return createState;
+  window.loadStateMachine = loadStateMachine;
 })();
