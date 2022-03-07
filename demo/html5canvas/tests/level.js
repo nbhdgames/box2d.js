@@ -81,7 +81,7 @@
   class CreateEnemyMachine extends LevelStateMachine {
     enter() {
       this.game.addEnemy(
-        new SparkEnemy(this.data.enemy, () => {
+        new SparkEnemy(this.game, this.data.enemy, () => {
           this.onOver();
         })
       );

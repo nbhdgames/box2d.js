@@ -21,7 +21,8 @@ const CAT_WALL = 16;
 const CAT_EDGE = 32;
 const CAT_ALL = 0xffff;
 
-const FOLLOW_UP_DISTANCE = 2;
+// TODO: remove this, use attack range contact instead.
+const FOLLOW_UP_DISTANCE = 3;
 
 function createFilter(cat, mask, group) {
   let ret;
@@ -64,20 +65,34 @@ const edgeFilter = createFilter(
   GROUP_EDGE
 );
 
+const atkRange = [
+  [0, 0],
+  [Math.cos(Math.PI / 4) * 4, -Math.sin(Math.PI / 4) * 4],
+  [Math.cos(Math.PI / 8) * 4, -Math.sin(Math.PI / 8) * 4],
+  [4, 0],
+  [Math.cos(Math.PI / 8) * 4, Math.sin(Math.PI / 8) * 4],
+  [Math.cos(Math.PI / 4) * 4, Math.sin(Math.PI / 4) * 4],
+];
+
 class SparkUnit {
   body;
   speedObj = new b2Vec2();
   target;
   size = 0;
+  atkRangeEnemySet = new Set();
 
-  constructor({ race, x, y, angle, size }) {
-    this.size = size;
+  constructor(game, data) {
+    this.size = data.size;
+    this.setupBody(game, data);
+    this.setupAttackRange(game, data);
+  }
+
+  setupBody(game, { race, x, y, angle, size }) {
     const bodyDef = new b2BodyDef();
     bodyDef.set_fixedRotation(true);
     bodyDef.set_type(race === GROUP_PLAYER ? b2_dynamicBody : b2_kinematicBody);
     bodyDef.set_position(new b2Vec2(x, y));
     bodyDef.set_angle(angle);
-    bodyDef.set_userData(this);
     this.body = world.CreateBody(bodyDef);
 
     const circleShape = new b2CircleShape();
@@ -86,7 +101,34 @@ class SparkUnit {
     fixDef.set_shape(circleShape);
     fixDef.set_filter(race === GROUP_PLAYER ? playerFilter() : enemyFilter());
     fixDef.set_density(1);
+    fixDef.set_userData(game.registerUserData(this));
     this.body.CreateFixture(fixDef);
+  }
+
+  setupAttackRange(game, { race, size }) {
+    // attack range.
+    const sensorShape = createPolygonShape(
+      atkRange.map((v) => new b2Vec2(v[0] * size, v[1] * size))
+    );
+    const fixDef1 = new b2FixtureDef();
+    fixDef1.set_shape(sensorShape);
+    fixDef1.set_filter(
+      race === GROUP_PLAYER ? playerMissleFilter() : enemyMissleFilter()
+    );
+    fixDef1.set_isSensor(true);
+    fixDef1.set_userData(
+      game.registerUserData({
+        onBeginContact: (other) => {
+          if (other instanceof SparkUnit) {
+            this.atkRangeEnemySet.add(other);
+          }
+        },
+        onEndContact: (other) => {
+          this.atkRangeEnemySet.delete(other);
+        },
+      })
+    );
+    this.body.CreateFixture(fixDef1);
   }
 
   setVelocity(vx, vy) {
@@ -116,10 +158,10 @@ class SparkUnit {
     const dy = tarPos.get_y() - myPos.get_y();
     // face to target
     this.body.SetTransform(myPos, Math.atan2(dy, dx));
-    const expectDis = this.size + this.target.size + FOLLOW_UP_DISTANCE;
+    // const expectDis = this.size * FOLLOW_UP_DISTANCE + this.target.size;
     const d = Math.sqrt(dx * dx + dy * dy);
 
-    if (d > expectDis) {
+    if (!this.atkRangeEnemySet.has(this.target)) {
       // move closer.
       const vx = (dx * this.speed) / d;
       const vy = (dy * this.speed) / d;
@@ -138,8 +180,8 @@ class SparkUnit {
 class SparkPlayer extends SparkUnit {
   moveFlags = 0;
 
-  constructor() {
-    super({
+  constructor(game) {
+    super(game, {
       race: GROUP_PLAYER,
       x: 0,
       y: 10,
@@ -172,6 +214,11 @@ class SparkPlayer extends SparkUnit {
     } else if (this.moveFlags & MOVE_DOWN) {
       vy = 1;
     }
+    const d = Math.sqrt(vx * vx + vy * vy);
+    if (d > 1) {
+      vx /= d;
+      vy /= d;
+    }
     this.setVelocity(vx, vy);
   }
 
@@ -185,8 +232,8 @@ class SparkEnemy extends SparkUnit {
   state;
   onKilled;
 
-  constructor(data, onKilled) {
-    super({
+  constructor(game, data, onKilled) {
+    super(game, {
       race: GROUP_ENEMY,
       x: data.x,
       y: data.y,
@@ -280,6 +327,23 @@ class SparkGame {
   level;
   enemies = new Set();
 
+  userDataRegistry = new Map();
+  userDataRegistryId = 0;
+
+  registerUserData(obj) {
+    const ret = ++this.userDataRegistryId;
+    this.userDataRegistry.set(ret, obj);
+    return ret;
+  }
+
+  getUserData(id) {
+    return id && this.userDataRegistry.get(id);
+  }
+
+  freeUserData(id) {
+    this.userDataRegistry.delete(id);
+  }
+
   setNiceViewCenter() {
     PTM = 10;
     setViewCenterWorld(new b2Vec2(0, 0), true);
@@ -287,12 +351,44 @@ class SparkGame {
 
   setup() {
     world.SetGravity(new b2Vec2(0, 0));
-    this.player = new SparkPlayer();
+    this.player = new SparkPlayer(this);
     this.wall = new SparkWall();
     this.edge = new SparkEdge();
+    this.listenContact();
   }
 
-  createWall() {}
+  listenContact() {
+    const listener = new Box2D.JSContactListener();
+    listener.BeginContact = (contactPtr) => {
+      var contact = Box2D.wrapPointer(contactPtr, b2Contact);
+      const a = this.getUserData(contact.GetFixtureA().GetUserData());
+      const b = this.getUserData(contact.GetFixtureB().GetUserData());
+      if (a && b) {
+        if (a.onBeginContact) {
+          a.onBeginContact(b);
+        }
+        if (b.onBeginContact) {
+          b.onBeginContact(a);
+        }
+      }
+    };
+    listener.EndContact = (contactPtr) => {
+      var contact = Box2D.wrapPointer(contactPtr, b2Contact);
+      const a = this.getUserData(contact.GetFixtureA().GetUserData());
+      const b = this.getUserData(contact.GetFixtureB().GetUserData());
+      if (a && b) {
+        if (a.onEndContact) {
+          a.onEndContact(b);
+        }
+        if (b.onEndContact) {
+          b.onEndContact(a);
+        }
+      }
+    };
+    listener.PreSolve = () => {};
+    listener.PostSolve = () => {};
+    world.SetContactListener(listener);
+  }
 
   step(dt) {
     if (this.player) {
@@ -331,7 +427,7 @@ class SparkGame {
   }
   addEnemy(enemy) {
     if (!(enemy instanceof SparkEnemy)) {
-      enemy = new SparkEnemy(enemy);
+      enemy = new SparkEnemy(this, enemy);
     }
     this.enemies.add(enemy);
     enemy.target = this.player;
