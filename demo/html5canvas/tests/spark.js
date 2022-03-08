@@ -495,10 +495,10 @@ class SparkEdge {
     this.body = world.CreateBody(bodyDef);
 
     const ud = this.game.registerUserData(this);
-    this.createBox(ud, 35, 1, 0, -43);
-    this.createBox(ud, 35, 1, 0, 43);
-    this.createBox(ud, 1, 43, -35, 0);
-    this.createBox(ud, 1, 43, 35, 0);
+    this.createBox(ud, 54, 10, 0, -62);
+    this.createBox(ud, 54, 10, 0, 62);
+    this.createBox(ud, 10, 62, -54, 0);
+    this.createBox(ud, 10, 62, 54, 0);
   }
   createBox(ud, hx, hy, x, y) {
     const box = new b2PolygonShape();
@@ -797,7 +797,7 @@ class embox2dTest_arch extends SparkGame {
         states: [
           {
             type: "interval",
-            interval: 1,
+            interval: 2,
             count: 10,
             delay: 0,
             each: {
@@ -822,7 +822,7 @@ class embox2dTest_arch extends SparkGame {
           },
           {
             type: "interval",
-            interval: 1,
+            interval: 2,
             count: 10,
             delay: 0,
             each: {
@@ -837,11 +837,62 @@ class embox2dTest_arch extends SparkGame {
                   type: "followUp",
                 },
                 shootMethod: {
+                  type: "attack",
+                  preTime: 1,
+                  postTime: 1,
+                  dmg: 50,
+                },
+              },
+            },
+          },
+          {
+            type: "interval",
+            interval: 2,
+            count: 10,
+            delay: 1,
+            each: {
+              type: "createEnemy",
+              enemy: {
+                x: -20,
+                y: -40,
+                hp: 100,
+                size: 1,
+                speed: 5,
+                state: {
+                  type: "followUp",
+                },
+                shootMethod: {
                   type: "ammo",
                   v: 10,
                   preTime: 1,
                   postTime: 1,
-                  dmg: 50,
+                  dmg: 20,
+                },
+              },
+            },
+          },
+          {
+            type: "interval",
+            interval: 2,
+            count: 10,
+            delay: 1,
+            each: {
+              type: "createEnemy",
+              enemy: {
+                x: 20,
+                y: -40,
+                hp: 100,
+                size: 1,
+                speed: 5,
+                state: {
+                  type: "followUp",
+                },
+                shootMethod: {
+                  type: "ammo",
+                  v: 10,
+                  preTime: 1,
+                  postTime: 1,
+                  dmg: 20,
                 },
               },
             },

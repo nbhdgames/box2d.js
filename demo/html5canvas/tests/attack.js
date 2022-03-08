@@ -28,7 +28,7 @@ class ShootMethodBase {
   /**
    * 是否明智使用，供AI参考。
    */
-  isGood() {
+  get isGood() {
     return true;
   }
   shoot() {
@@ -43,7 +43,7 @@ class AttackShootMethod extends ShootMethodBase {
       enemy.makeDamage(dmg);
     }
   }
-  isGood() {
+  get isGood() {
     return this.unit.atkRangeEnemySet.size > 0;
   }
 }
@@ -55,7 +55,7 @@ class AmmoShootMethod extends ShootMethodBase {
       target.makeDamage(dmg);
     });
   }
-  isGood() {
+  get isGood() {
     return !!this.unit.target;
   }
 }
