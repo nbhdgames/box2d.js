@@ -19,6 +19,16 @@
     }
     step() {
       this.unit.followUp();
+      const { shootMethod } = this.unit;
+
+      // Only shoot while has targets.
+      if (shootMethod) {
+        if (shootMethod.isGood && !shootMethod.shooting) {
+          shootMethod.start();
+        } else if (!shootMethod.isGood && shootMethod.shooting) {
+          shootMethod.stop();
+        }
+      }
     }
   }
 

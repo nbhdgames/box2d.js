@@ -4,19 +4,18 @@ const MOVE_UP = 0x04;
 const MOVE_DOWN = 0x08;
 
 const PLAYER_SIZE = 1;
-
-const SPEED = 20;
+const PLAYER_SPEED = 20;
 
 const GROUP_PLAYER = 1;
 const GROUP_ENEMY = 2;
-const GROUP_MISSLE = -2;
+const GROUP_BULLET = -2;
 const GROUP_EDGE = -3;
 const GROUP_WALL = -4;
 
 const CAT_PLAYER = 1;
 const CAT_ENEMY = 2;
-const CAT_PLAYER_MISSLE = 4;
-const CAT_ENEMY_MISSLE = 8;
+const CAT_PLAYER_BULLET = 4;
+const CAT_ENEMY_BULLET = 8;
 const CAT_WALL = 16;
 const CAT_EDGE = 32;
 const CAT_ALL = 0xffff;
@@ -39,29 +38,29 @@ function createFilter(cat, mask, group) {
 
 const playerFilter = createFilter(
   CAT_PLAYER,
-  CAT_ENEMY | CAT_ENEMY_MISSLE | CAT_WALL,
+  CAT_ENEMY | CAT_ENEMY_BULLET | CAT_WALL,
   GROUP_PLAYER
 );
 const enemyFilter = createFilter(
   CAT_ENEMY,
-  CAT_PLAYER | CAT_PLAYER_MISSLE,
+  CAT_PLAYER | CAT_PLAYER_BULLET,
   GROUP_ENEMY
 );
-const playerMissleFilter = createFilter(
-  CAT_PLAYER_MISSLE,
+const playerBulletFilter = createFilter(
+  CAT_PLAYER_BULLET,
   CAT_ENEMY | CAT_EDGE,
-  GROUP_MISSLE
+  GROUP_BULLET
 );
-const enemyMissleFilter = createFilter(
-  CAT_ENEMY_MISSLE,
+const enemyBulletFilter = createFilter(
+  CAT_ENEMY_BULLET,
   CAT_PLAYER | CAT_EDGE,
-  GROUP_MISSLE
+  GROUP_BULLET
 );
 const wallFilter = createFilter(CAT_WALL, CAT_PLAYER, GROUP_WALL);
 
 const edgeFilter = createFilter(
   CAT_EDGE,
-  CAT_ENEMY_MISSLE | CAT_PLAYER_MISSLE,
+  CAT_ENEMY_BULLET | CAT_PLAYER_BULLET,
   GROUP_EDGE
 );
 
@@ -74,23 +73,101 @@ const atkRange = [
   [Math.cos(Math.PI / 4) * 4, Math.sin(Math.PI / 4) * 4],
 ];
 
+class SparkBullet {
+  unit;
+  data;
+  body;
+  ud;
+  exploded = false;
+  explodeAtUnits = new Set();
+
+  constructor(unit, data, onExplode) {
+    this.unit = unit;
+    this.data = data;
+    this.onExplode = onExplode;
+    this.ud = unit.game.registerUserData(this);
+    this.setup();
+  }
+  setup() {
+    const race = this.unit.race;
+    const { x, y, vx, vy, size } = this.data;
+    const bodyDef = new b2BodyDef();
+    bodyDef.set_fixedRotation(true);
+    bodyDef.set_type(b2_dynamicBody);
+    bodyDef.set_bullet(true);
+    bodyDef.set_position(new b2Vec2(x, y));
+    bodyDef.set_linearVelocity(new b2Vec2(vx, vy));
+    this.body = world.CreateBody(bodyDef);
+
+    const circleShape = new b2CircleShape();
+    circleShape.set_m_radius(size);
+    const fixDef = new b2FixtureDef();
+    fixDef.set_shape(circleShape);
+    fixDef.set_filter(
+      race === GROUP_PLAYER ? playerBulletFilter() : enemyBulletFilter()
+    );
+    fixDef.set_density(1);
+    fixDef.set_isSensor(true);
+    fixDef.set_userData(this.ud);
+    this.body.CreateFixture(fixDef);
+  }
+
+  explode() {
+    this.unit.game.freeUserData(this.ud);
+    world.DestroyBody(this.body);
+    for (const item of this.explodeAtUnits) {
+      this.onExplode(item);
+    }
+  }
+
+  onBeginContact(other) {
+    if (other instanceof SparkUnit) {
+      this.explodeAtUnits.add(other);
+    }
+    if (!this.exploded) {
+      this.exploded = true;
+      this.unit.game.explodingBullets.push(this);
+    }
+  }
+}
+
 class SparkUnit {
+  data;
   game;
   body;
   speedObj = new b2Vec2();
   target;
-  size = 0;
-  atkRangeEnemySet = new Set();
+  atkRangeEnemySet = new Map();
   destroyed = false;
+  shootMethod;
+  hp;
+
+  userDatas = new Set();
 
   constructor(game, data) {
     this.game = game;
-    this.size = data.size;
-    this.setupBody(game, data);
-    this.setupAttackRange(game, data);
+    this.data = data;
+    this.hp = data.hp;
+    this.setupBody();
+    this.setupAttackRange();
+    if (data.shootMethod) {
+      this.shootMethod = loadShootMethod(this, data.shootMethod);
+    }
   }
 
-  setupBody(game, { race, x, y, angle, size }) {
+  get race() {
+    return GROUP_ENEMY;
+  }
+
+  registerUserData(obj) {
+    const ret = this.game.registerUserData(obj);
+    this.userDatas.add(ret);
+    return ret;
+  }
+
+  setupBody() {
+    const { race } = this;
+    const { x, y, angle = 0, size } = this.data;
     const bodyDef = new b2BodyDef();
     bodyDef.set_fixedRotation(true);
     bodyDef.set_type(race === GROUP_PLAYER ? b2_dynamicBody : b2_kinematicBody);
@@ -104,11 +181,13 @@ class SparkUnit {
     fixDef.set_shape(circleShape);
     fixDef.set_filter(race === GROUP_PLAYER ? playerFilter() : enemyFilter());
     fixDef.set_density(1);
-    fixDef.set_userData(game.registerUserData(this));
+    fixDef.set_userData(this.registerUserData(this));
     this.body.CreateFixture(fixDef);
   }
 
-  setupAttackRange(game, { race, size }) {
+  setupAttackRange() {
+    const { race } = this;
+    const { size } = this.data;
     // attack range.
     const sensorShape = createPolygonShape(
       atkRange.map((v) => new b2Vec2(v[0] * size, v[1] * size))
@@ -116,18 +195,34 @@ class SparkUnit {
     const fixDef1 = new b2FixtureDef();
     fixDef1.set_shape(sensorShape);
     fixDef1.set_filter(
-      race === GROUP_PLAYER ? playerMissleFilter() : enemyMissleFilter()
+      race === GROUP_PLAYER ? playerBulletFilter() : enemyBulletFilter()
     );
     fixDef1.set_isSensor(true);
     fixDef1.set_userData(
-      game.registerUserData({
+      this.registerUserData({
         onBeginContact: (other) => {
           if (other instanceof SparkUnit) {
-            this.atkRangeEnemySet.add(other);
+            if (this.atkRangeEnemySet.has(other)) {
+              this.atkRangeEnemySet.set(
+                other,
+                this.atkRangeEnemySet.get(other) + 1
+              );
+            } else {
+              this.atkRangeEnemySet.set(other, 1);
+            }
           }
         },
         onEndContact: (other) => {
-          this.atkRangeEnemySet.delete(other);
+          if (other instanceof SparkUnit) {
+            if (this.atkRangeEnemySet.has(other)) {
+              const v = this.atkRangeEnemySet.get(other) - 1;
+              if (v > 0) {
+                this.atkRangeEnemySet.set(other, v);
+              } else {
+                this.atkRangeEnemySet.delete(other);
+              }
+            }
+          }
         },
       })
     );
@@ -135,7 +230,7 @@ class SparkUnit {
   }
 
   setVelocity(vx, vy) {
-    this.speedObj.Set(vx * SPEED, vy * SPEED);
+    this.speedObj.Set(vx * this.speed, vy * this.speed);
     this.body.SetLinearVelocity(this.speedObj);
   }
 
@@ -152,6 +247,7 @@ class SparkUnit {
   }
   followUp() {
     if (!this.target || this.target.destroyed) {
+      this.setVelocity(0, 0);
       return;
     }
     const myPos = this.body.GetPosition();
@@ -166,14 +262,87 @@ class SparkUnit {
 
     if (!this.atkRangeEnemySet.has(this.target)) {
       // move closer.
-      const vx = (dx * this.speed) / d;
-      const vy = (dy * this.speed) / d;
-      this.speedObj.Set(vx, vy);
-      this.body.SetLinearVelocity(this.speedObj);
+      const vx = dx / d;
+      const vy = dy / d;
+      this.setVelocity(vx, vy);
     } else {
-      this.speedObj.Set(0, 0);
-      this.body.SetLinearVelocity(this.speedObj);
+      this.setVelocity(0, 0);
     }
+  }
+
+  get speed() {
+    return this.data.speed;
+  }
+
+  startShoot() {
+    if (this.shootMethod) {
+      this.shootMethod.start();
+    }
+  }
+
+  stopShoot() {
+    if (this.shootMethod) {
+      this.shootMethod.stop();
+    }
+  }
+
+  step(dt) {
+    if (this.shootMethod) {
+      this.shootMethod.step(dt);
+    }
+    // target may be killed during shoot.
+    if (this.target && this.target.destroyed) {
+      this.target = null;
+    }
+  }
+
+  makeDamage(dmg) {
+    this.hp -= dmg;
+    if (this.hp < 0) {
+      this.kill();
+    }
+  }
+
+  kill() {
+    if (this.destroyed) {
+      return;
+    }
+    // assume all contact to be over.
+    for (
+      let edge = this.body.GetContactList();
+      Box2D.getPointer(edge);
+      edge = edge.get_next()
+    ) {
+      this.game.onEndContact(edge.get_contact());
+    }
+
+    this.destroyed = true;
+    for (const ud of this.userDatas) {
+      this.game.freeUserData(ud);
+    }
+    this.userDatas.clear();
+
+    // Destroy physics body;
+    world.DestroyBody(this.body);
+    this.body = null;
+  }
+
+  fireBullet(v, onExplode) {
+    const pos = this.body.GetPosition();
+    const a = this.body.GetAngle();
+    const x = pos.get_x();
+    const y = pos.get_y();
+    new SparkBullet(
+      this,
+      {
+        x,
+        y,
+        size: 0.2,
+        vx: Math.cos(a) * v,
+        vy: Math.sin(a) * v,
+      },
+      onExplode
+    );
   }
 }
 
@@ -183,14 +352,12 @@ class SparkUnit {
 class SparkPlayer extends SparkUnit {
   moveFlags = 0;
 
-  constructor(game) {
-    super(game, {
-      race: GROUP_PLAYER,
-      x: 0,
-      y: 10,
-      angle: Math.PI / -2,
-      size: PLAYER_SIZE,
-    });
+  constructor(game, data) {
+    super(game, data);
+  }
+
+  get race() {
+    return GROUP_PLAYER;
   }
 
   moveKeyDown(flag) {
@@ -225,111 +392,114 @@ class SparkPlayer extends SparkUnit {
     this.setVelocity(vx, vy);
   }
 
-  startShoot() {}
-
-  stopShoot() {}
-
   switchTarget() {
     const enemies = [...this.game.enemies];
     const idx = enemies.indexOf(this.target); // or -1
     this.target = enemies[(idx + 1) % enemies.length];
   }
 
-  step() {
+  step(dt) {
+    super.step(dt);
+    if (!this.target && this.game.enemies.size) {
+      this.switchTarget();
+    }
     this.updateVelocity();
     this.faceToTarget();
   }
 }
 
 class SparkEnemy extends SparkUnit {
-  data;
   state;
   onKilled;
 
   constructor(game, data, onKilled) {
-    super(game, {
-      race: GROUP_ENEMY,
-      x: data.x,
-      y: data.y,
-      angle: Math.PI / 2,
-      size: data.size,
-    });
-    this.data = data;
-    this.setupState();
+    super(game, data);
     this.onKilled = onKilled;
-  }
-
-  get speed() {
-    return this.data.speed;
+    this.setupState();
   }
 
   setupState() {
-    this.state = loadStateMachine(this, this.data.state, () => {
-      this.state = null;
-    });
-    this.state.enter();
+    if (this.data.state) {
+      this.state = loadStateMachine(this, this.data.state, () => {
+        console.log("Good bye.");
+        this.state = null;
+      });
+      this.state.enter();
+    }
   }
 
-  step() {
+  step(dt) {
+    super.step(dt);
     if (this.state) {
-      this.state.step();
+      this.state.step(dt);
     }
+  }
+
+  kill() {
+    super.kill();
+    this.game.enemies.delete(this);
+    this.onKilled();
   }
 }
 
 class SparkWall {
+  game;
   body;
-  constructor() {
+  constructor(game) {
+    this.game = game;
     this.setup();
   }
   setup() {
     const bodyDef = new b2BodyDef();
     bodyDef.set_fixedRotation(true);
     bodyDef.set_type(b2_staticBody);
-    bodyDef.set_userData(this);
     this.body = world.CreateBody(bodyDef);
 
-    this.createBox(25, 1, 0, -33);
-    this.createBox(25, 1, 0, 33);
-    this.createBox(1, 33, -25, 0);
-    this.createBox(1, 33, 25, 0);
+    const ud = this.game.registerUserData(this);
+    this.createBox(ud, 25, 1, 0, -33);
+    this.createBox(ud, 25, 1, 0, 33);
+    this.createBox(ud, 1, 33, -25, 0);
+    this.createBox(ud, 1, 33, 25, 0);
   }
-  createBox(hx, hy, x, y) {
+  createBox(ud, hx, hy, x, y) {
     const box = new b2PolygonShape();
     box.SetAsBox(hx, hy, new b2Vec2(x, y), 0);
     const fixDef = new b2FixtureDef();
     fixDef.set_shape(box);
     fixDef.set_filter(wallFilter());
     fixDef.set_density(1);
+    fixDef.set_userData(ud);
     this.body.CreateFixture(fixDef);
   }
 }
 
 class SparkEdge {
+  game;
   body;
-  constructor() {
+  constructor(game) {
+    this.game = game;
     this.setup();
   }
   setup() {
     const bodyDef = new b2BodyDef();
     bodyDef.set_fixedRotation(true);
     bodyDef.set_type(b2_staticBody);
-    bodyDef.set_userData(this);
     this.body = world.CreateBody(bodyDef);
 
-    this.createBox(35, 1, 0, -43);
-    this.createBox(35, 1, 0, 43);
-    this.createBox(1, 43, -35, 0);
-    this.createBox(1, 43, 35, 0);
+    const ud = this.game.registerUserData(this);
+    this.createBox(ud, 35, 1, 0, -43);
+    this.createBox(ud, 35, 1, 0, 43);
+    this.createBox(ud, 1, 43, -35, 0);
+    this.createBox(ud, 1, 43, 35, 0);
   }
-  createBox(hx, hy, x, y) {
+  createBox(ud, hx, hy, x, y) {
     const box = new b2PolygonShape();
     box.SetAsBox(hx, hy, new b2Vec2(x, y), 0);
     const fixDef = new b2FixtureDef();
     fixDef.set_shape(box);
-    fixDef.set_filter(wallFilter());
-    fixDef.set_density(1);
+    fixDef.set_filter(edgeFilter());
     fixDef.set_isSensor(true);
+    fixDef.set_userData(ud);
     this.body.CreateFixture(fixDef);
   }
 }
@@ -343,6 +513,11 @@ class SparkGame {
 
   userDataRegistry = new Map();
   userDataRegistryId = 0;
+
+  /**
+   * 在物理环节推算出会爆炸的飞弹（可能击中了目标或墙壁）
+   */
+  explodingBullets = [];
 
   registerUserData(obj) {
     const ret = ++this.userDataRegistryId;
@@ -365,39 +540,44 @@ class SparkGame {
 
   setup() {
     world.SetGravity(new b2Vec2(0, 0));
-    this.player = new SparkPlayer(this);
-    this.wall = new SparkWall();
-    this.edge = new SparkEdge();
+    this.wall = new SparkWall(this);
+    this.edge = new SparkEdge(this);
     this.listenContact();
+  }
+
+  onBeginContact(contact) {
+    const a = this.getUserData(contact.GetFixtureA().GetUserData());
+    const b = this.getUserData(contact.GetFixtureB().GetUserData());
+    if (a && b) {
+      if (a.onBeginContact) {
+        a.onBeginContact(b);
+      }
+      if (b.onBeginContact) {
+        b.onBeginContact(a);
+      }
+    }
+  }
+
+  onEndContact(contact) {
+    const a = this.getUserData(contact.GetFixtureA().GetUserData());
+    const b = this.getUserData(contact.GetFixtureB().GetUserData());
+    if (a && b) {
+      if (a.onEndContact) {
+        a.onEndContact(b);
+      }
+      if (b.onEndContact) {
+        b.onEndContact(a);
+      }
+    }
   }
 
   listenContact() {
     const listener = new Box2D.JSContactListener();
     listener.BeginContact = (contactPtr) => {
-      var contact = Box2D.wrapPointer(contactPtr, b2Contact);
-      const a = this.getUserData(contact.GetFixtureA().GetUserData());
-      const b = this.getUserData(contact.GetFixtureB().GetUserData());
-      if (a && b) {
-        if (a.onBeginContact) {
-          a.onBeginContact(b);
-        }
-        if (b.onBeginContact) {
-          b.onBeginContact(a);
-        }
-      }
+      this.onBeginContact(Box2D.wrapPointer(contactPtr, b2Contact));
     };
     listener.EndContact = (contactPtr) => {
-      var contact = Box2D.wrapPointer(contactPtr, b2Contact);
-      const a = this.getUserData(contact.GetFixtureA().GetUserData());
-      const b = this.getUserData(contact.GetFixtureB().GetUserData());
-      if (a && b) {
-        if (a.onEndContact) {
-          a.onEndContact(b);
-        }
-        if (b.onEndContact) {
-          b.onEndContact(a);
-        }
-      }
+      this.onEndContact(Box2D.wrapPointer(contactPtr, b2Contact));
     };
     listener.PreSolve = () => {};
     listener.PostSolve = () => {};
@@ -405,20 +585,27 @@ class SparkGame {
   }
 
   step(dt) {
-    if (this.player) {
-      this.player.step();
+    if (this.player && !this.player.destroyed) {
+      this.player.step(dt);
     }
     for (const enemy of this.enemies) {
-      enemy.step();
+      enemy.step(dt);
     }
     if (this.level) {
       this.level.step(dt);
     }
+    for (const bullet of this.explodingBullets) {
+      bullet.explode();
+    }
+    this.explodingBullets.splice(0);
   }
 
   onKeyDown(canvas, evt) {
     evt.preventDefault();
     evt.stopPropagation();
+    if (this.player.destroyed) {
+      return;
+    }
     if (evt.code == "KeyW") {
       this.player.moveKeyDown(MOVE_UP);
     } else if (evt.code == "KeyS") {
@@ -438,6 +625,9 @@ class SparkGame {
   }
 
   onKeyUp(canvas, evt) {
+    if (this.player.destroyed) {
+      return;
+    }
     if (evt.code == "KeyW") {
       this.player.moveKeyUp(MOVE_UP);
     } else if (evt.code == "KeyS") {
@@ -451,9 +641,6 @@ class SparkGame {
     }
   }
   addEnemy(enemy) {
-    if (!(enemy instanceof SparkEnemy)) {
-      enemy = new SparkEnemy(this, enemy);
-    }
     this.enemies.add(enemy);
     enemy.target = this.player;
     if (!this.player.target) {
@@ -461,70 +648,199 @@ class SparkGame {
     }
     return enemy;
   }
+
+  cleanup() {}
 }
 
 class embox2dTest_spark extends SparkGame {
   setup() {
     super.setup();
-    this.level = loadLevel(this, {
-      type: "parellel",
-      states: [
-        {
-          type: "interval",
-          interval: 1,
-          count: 5,
-          delay: 0,
-          each: {
-            type: "createEnemy",
-            enemy: {
-              x: -10,
-              y: -40,
-              hp: 100,
-              size: 1,
-              speed: 5,
-              state: {
-                type: "followUp",
-              },
-            },
-          },
-        },
-        {
-          type: "interval",
-          interval: 1,
-          count: 5,
-          delay: 0,
-          each: {
-            type: "createEnemy",
-            enemy: {
-              x: 10,
-              y: -40,
-              hp: 100,
-              size: 1,
-              speed: 5,
-              state: {
-                type: "followUp",
-              },
-            },
-          },
-        },
-      ],
+
+    this.player = new SparkPlayer(this, {
+      race: GROUP_PLAYER,
+      x: 0,
+      y: 10,
+      hp: 100,
+      angle: Math.PI / -2,
+      size: PLAYER_SIZE,
+      speed: PLAYER_SPEED,
+      shootMethod: {
+        type: "attack",
+        preTime: 0.2,
+        postTime: 0.3,
+        dmg: 50,
+      },
     });
+
+    this.level = loadLevel(
+      this,
+      {
+        type: "parellel",
+        states: [
+          {
+            type: "interval",
+            interval: 1,
+            count: 10,
+            delay: 0,
+            each: {
+              type: "createEnemy",
+              enemy: {
+                x: -10,
+                y: -40,
+                hp: 100,
+                size: 1,
+                speed: 5,
+                state: {
+                  type: "followUp",
+                },
+                shootMethod: {
+                  type: "attack",
+                  preTime: 0.2,
+                  postTime: 0.3,
+                  dmg: 50,
+                },
+              },
+            },
+          },
+          {
+            type: "interval",
+            interval: 1,
+            count: 10,
+            delay: 0,
+            each: {
+              type: "createEnemy",
+              enemy: {
+                x: 10,
+                y: -40,
+                hp: 100,
+                size: 1,
+                speed: 5,
+                state: {
+                  type: "followUp",
+                },
+              },
+            },
+          },
+          // {
+          //   type: "createEnemy",
+          //   enemy: {
+          //     x: 10,
+          //     y: 10,
+          //     hp: 100,
+          //     size: 1,
+          //     speed: 5,
+          //     // state: {
+          //     //   type: "followUp",
+          //     // },
+          //   },
+          // },
+          // {
+          //   type: "createEnemy",
+          //   enemy: {
+          //     x: 10,
+          //     y: 12,
+          //     hp: 100,
+          //     size: 1,
+          //     speed: 5,
+          //     // state: {
+          //     //   type: "followUp",
+          //     // },
+          //   },
+          // },
+        ],
+      },
+      () => {
+        console.log("Level completed!");
+      }
+    );
     this.level.enter();
-    // for (let i = 0; i <= 10; i++) {
-    //   this.addEnemy(
-    //     new SparkEnemy({
-    //       hp: 100,
-    //       x: (i - 5) * 2,
-    //       y: -32,
-    //       size: 1,
-    //       speed: 5,
-    //       state: {
-    //         type: "followUp",
-    //       },
-    //     })
-    //   );
-    // }
   }
-  cleanup() {}
+  cleanup() {
+    super.cleanup();
+  }
 }
 window.embox2dTest_spark = embox2dTest_spark;
+
+class embox2dTest_arch extends SparkGame {
+  setup() {
+    super.setup();
+
+    this.player = new SparkPlayer(this, {
+      race: GROUP_PLAYER,
+      x: 0,
+      y: 10,
+      hp: 100,
+      angle: Math.PI / -2,
+      size: PLAYER_SIZE,
+      speed: PLAYER_SPEED,
+      shootMethod: {
+        type: "ammo",
+        preTime: 0.1,
+        postTime: 0.05,
+        v: 40,
+        dmg: 5,
+      },
+    });
+
+    this.level = loadLevel(
+      this,
+      {
+        type: "parellel",
+        states: [
+          {
+            type: "interval",
+            interval: 1,
+            count: 10,
+            delay: 0,
+            each: {
+              type: "createEnemy",
+              enemy: {
+                x: -10,
+                y: -40,
+                hp: 100,
+                size: 1,
+                speed: 5,
+                state: {
+                  type: "followUp",
+                },
+                shootMethod: {
+                  type: "attack",
+                  preTime: 0.2,
+                  postTime: 0.3,
+                  dmg: 50,
+                },
+              },
+            },
+          },
+          {
+            type: "interval",
+            interval: 1,
+            count: 10,
+            delay: 0,
+            each: {
+              type: "createEnemy",
+              enemy: {
+                x: 10,
+                y: -40,
+                hp: 100,
+                size: 1,
+                speed: 5,
+                state: {
+                  type: "followUp",
+                },
+              },
+            },
+          },
+        ],
+      },
+      () => {
+        console.log("Level completed!");
+      }
+    );
+    this.level.enter();
+  }
+  cleanup() {
+    super.cleanup();
+  }
+}
+window.embox2dTest_arch = embox2dTest_arch;
