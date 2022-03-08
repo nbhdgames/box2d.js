@@ -8,9 +8,15 @@
     enter() {}
     leave() {}
     step() {}
+    over() {
+      if (this.onOver) {
+        this.onOver();
+        this.onOver = null;
+      }
+    }
   }
 
-  class FollowUpStateMachine extends UnitStateMachine {
+  class FollowUpState extends UnitStateMachine {
     enter() {
       this.unit.body.SetType(b2_dynamicBody);
     }
@@ -22,8 +28,18 @@
     }
   }
 
+  class MoveToState extends UnitStateMachine {
+    step() {
+      if (this.unit.moveTo(this.data.x, this.data.y)) {
+        this.over();
+      }
+      this.unit.faceToTarget();
+    }
+  }
+
   const stateClasses = {
-    followUp: FollowUpStateMachine,
+    followUp: FollowUpState,
+    moveTo: MoveToState,
   };
 
   function loadStateMachine(unit, data) {

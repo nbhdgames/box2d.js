@@ -4,7 +4,7 @@ const MOVE_UP = 0x04;
 const MOVE_DOWN = 0x08;
 
 const PLAYER_SIZE = 1;
-const PLAYER_SPEED = 20;
+const PLAYER_SPEED = 10;
 
 const GROUP_PLAYER = 1;
 const GROUP_ENEMY = 2;
@@ -245,6 +245,22 @@ class SparkUnit {
     const dy = tarPos.get_y() - myPos.get_y();
     this.body.SetTransform(myPos, Math.atan2(dy, dx));
   }
+  /**
+   * return true if arrives.
+   */
+  moveTo(x, y) {
+    const myPos = this.body.GetPosition();
+    const dx = x - myPos.get_x();
+    const dy = y - myPos.get_y();
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d > this.speed / 60) {
+      const vx = dx / d;
+      const vy = dy / d;
+      this.setVelocity(vx, vy);
+    } else {
+      return true;
+    }
+  }
   followUp() {
     if (!this.target || this.target.destroyed) {
       this.setVelocity(0, 0);
@@ -421,7 +437,6 @@ class SparkEnemy extends SparkUnit {
   setupState() {
     if (this.data.state) {
       this.state = loadStateMachine(this, this.data.state, () => {
-        console.log("Good bye.");
         this.state = null;
       });
       this.state.enter();
@@ -783,9 +798,9 @@ class embox2dTest_arch extends SparkGame {
       speed: PLAYER_SPEED,
       shootMethod: {
         type: "ammo",
-        preTime: 0.1,
+        preTime: 0.05,
         postTime: 0.05,
-        v: 40,
+        v: 50,
         dmg: 20,
       },
     });
@@ -853,13 +868,15 @@ class embox2dTest_arch extends SparkGame {
             each: {
               type: "createEnemy",
               enemy: {
-                x: -20,
-                y: -40,
+                x: 30,
+                y: -20,
                 hp: 100,
                 size: 1,
-                speed: 5,
+                speed: 2,
                 state: {
-                  type: "followUp",
+                  type: "moveTo",
+                  x: -20,
+                  y: -20,
                 },
                 shootMethod: {
                   type: "ammo",
@@ -879,13 +896,15 @@ class embox2dTest_arch extends SparkGame {
             each: {
               type: "createEnemy",
               enemy: {
-                x: 20,
-                y: -40,
+                x: -30,
+                y: -20,
                 hp: 100,
                 size: 1,
-                speed: 5,
+                speed: 2,
                 state: {
-                  type: "followUp",
+                  type: "moveTo",
+                  x: 20,
+                  y: -20,
                 },
                 shootMethod: {
                   type: "ammo",
