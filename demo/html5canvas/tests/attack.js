@@ -55,6 +55,9 @@ class AmmoShootMethod extends ShootMethodBase {
       target.makeDamage(dmg);
     });
   }
+  isGood() {
+    return !!this.unit.target;
+  }
 }
 
 const shootMethods = {

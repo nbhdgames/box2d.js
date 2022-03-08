@@ -433,6 +433,14 @@ class SparkEnemy extends SparkUnit {
     if (this.state) {
       this.state.step(dt);
     }
+    // Only shoot while has targets.
+    if (this.shootMethod) {
+      if (this.shootMethod.isGood && !this.shootMethod.shooting) {
+        this.shootMethod.start();
+      } else if (!this.shootMethod.isGood && this.shootMethod.shooting) {
+        this.shootMethod.stop();
+      }
+    }
   }
 
   kill() {
@@ -778,7 +786,7 @@ class embox2dTest_arch extends SparkGame {
         preTime: 0.1,
         postTime: 0.05,
         v: 40,
-        dmg: 5,
+        dmg: 20,
       },
     });
 
@@ -827,6 +835,13 @@ class embox2dTest_arch extends SparkGame {
                 speed: 5,
                 state: {
                   type: "followUp",
+                },
+                shootMethod: {
+                  type: "ammo",
+                  v: 10,
+                  preTime: 1,
+                  postTime: 1,
+                  dmg: 50,
                 },
               },
             },
